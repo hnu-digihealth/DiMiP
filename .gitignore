@@ -1,0 +1,4 @@
+# ignore processed data dirs
+# raw data dirs have their own ignore logic
+processed/
+__pycache__/
