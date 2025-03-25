@@ -2,3 +2,5 @@
 # raw data dirs have their own ignore logic
 processed/
 __pycache__/
+size_and_color/data/results/*
+.DS_Store

@@ -113,8 +113,6 @@ class UNetLightning(pl.LightningModule):
             val_outputs = torch.sigmoid(outputs) > 0.5
         else:
             val_outputs = torch.softmax(outputs, dim=1)
-            val_outputs = torch.argmax(val_outputs, dim=1, keepdim=True)
-            labels = torch.argmax(labels, dim=1, keepdim=True)
 
         self.metric_f1(val_outputs, labels)
         self.metric_iou(val_outputs, labels)
@@ -171,16 +169,20 @@ class UNetLightning(pl.LightningModule):
             preds = torch.sigmoid(outputs) > 0.5
         else:
             preds = torch.softmax(outputs, dim=1)
-            preds = torch.argmax(preds, dim=1, keepdim=True)
-            labels = torch.argmax(labels, dim=1, keepdim=True)
+            preds_vis = torch.argmax(preds, dim=1, keepdim=True)
 
         self.metric_f1(preds, labels)
         self.metric_iou(preds, labels)
 
         # Compute per-image IoU manually for caching
         if self.visualization_path:
+            if self.classes > 1:
+                labels_vis = torch.argmax(labels, dim=1, keepdim=True)
+            else:
+                labels_vis = labels
+                
             iou_per_image = []
-            for p, l in zip(preds, labels):
+            for p, l in zip(preds_vis, labels_vis):
                 intersection = torch.logical_and(p == 1, l == 1).sum().item()
                 union = torch.logical_or(p == 1, l == 1).sum().item()
                 iou = intersection / union if union > 0 else 0.0

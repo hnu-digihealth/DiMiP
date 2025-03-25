@@ -4,6 +4,7 @@ from pathlib import Path
 
 # Third Party Libraries
 import numpy as np
+from monai.metrics import DiceMetric
 from monai.losses import DiceCELoss
 from monai.transforms import (
     Compose, LoadImaged, EnsureChannelFirstd, ToTensor, 
@@ -60,7 +61,7 @@ def train_and_validate_model(
 
     # setup transformations
     train_transforms = Compose([
-        LoadImaged(keys=['img', 'seg'], dtype=np.int16),
+        LoadImaged(keys=['img', 'seg'], dtype=np.float32),
         EnsureChannelFirstd(keys=['img', 'seg']),
         RandAdjustContrastd(keys=['img'], prob=0.5, gamma=(0.7, 1.3)),
         RandGaussianNoised(keys=['img'], prob=0.5, mean=0.0, std=0.01),
@@ -76,10 +77,11 @@ def train_and_validate_model(
     ])
 
     if color_mode == 'color':
+        print('color_mode')
         train_transforms = insert_transform(
             train_transforms, 
             HENormalization(keys=['img'], normalizer=normalizer, method='reinhard'),
-            2
+            4
         )
         val_transforms = insert_transform(
             val_transforms, 
@@ -87,6 +89,7 @@ def train_and_validate_model(
             2
         )
     else:
+        print('gray_mode')
         train_transforms = insert_transform(
             train_transforms, 
             ToGrayscale(keys=['img']),
@@ -99,6 +102,7 @@ def train_and_validate_model(
         )
 
     if classes > 1:
+        print('multi class')
         train_transforms = insert_transform(
             train_transforms, 
             AsDiscreted(keys=["seg"], to_onehot=classes),
@@ -161,14 +165,17 @@ def train_and_validate_model(
             color_mode=color_mode,
             classes=classes,
             loss_fn=DiceCELoss(softmax=True),
+            metric=DiceMetric(include_background=False, reduction="mean_batch", num_classes=classes, ignore_empty=False)
         )
 
     trainer = Trainer(
         max_epochs=1000,
         devices=1, accelerator=mode,
         precision=32,
+        limit_train_batches=12,
         callbacks=[
-            ModelCheckpoint(monitor='val_dice', mode='max', save_top_k=1, verbose=True),
+            ModelCheckpoint(monitor='val_dice', mode='max', save_top_k=1, verbose=True, filename='best_dice'),
+            ModelCheckpoint(monitor='val_loss', mode='min', save_top_k=1, verbose=True, filename='best_loss'),
             EarlyStopping(monitor='val_loss', patience=16, mode='min', verbose=True)
         ],
         default_root_dir=model_path

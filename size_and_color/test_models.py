@@ -2,7 +2,11 @@ from os import cpu_count
 from pathlib import Path
 from src.ml_utils.test import test_model
 
+from monai.utils.misc import set_determinism
+from pytorch_lightning import seed_everything
+
 from src.argparsers import data_setup_cli_parser, parse_path_arguments
+
 
 def test_color_and_gray_models(data_path: Path, model_path: Path):
     cocahis_color_path = model_path / 'cocahis_color'
@@ -170,6 +174,9 @@ if __name__ == '__main__':
     parser = data_setup_cli_parser()
     args = parser.parse_args()
     args = parse_path_arguments(args)
-    
+
+    set_determinism(seed=421337133742)
+    seed_everything(421337133742, workers=True)
+
     test_color_and_gray_models(args.data_path, args.model_path)
     # test_size_models(args.data_path)
