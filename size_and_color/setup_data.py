@@ -20,10 +20,6 @@ def main(data_path: Path, remove_raw: bool):
     unpack_rings(data_path, remove_raw)
     unpack_and_tile_panda(data_path, remove_raw)
 
-    # check lbls 
-    # '-> do we need to invert?
-    # '-> do we need to parse to bitmap
-
 
 if __name__ == '__main__':
     parser = data_setup_cli_parser()

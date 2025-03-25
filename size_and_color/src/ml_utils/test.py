@@ -1,0 +1,131 @@
+# Python Standard Library
+from pathlib import Path
+
+# Third Party Libraries
+import numpy as np
+import torch
+from torchvision.io import read_image
+from monai.losses import DiceCELoss
+from monai.transforms import (
+    Compose, LoadImaged, EnsureChannelFirstd, ToTensor,
+    AsDiscreted
+)
+from monai.data import Dataset, DataLoader
+from monai.metrics import DiceMetric, MeanIoU
+from pytorch_lightning import Trainer
+import torchstain
+
+# Local Libraries
+from src.ml_utils.preprocessing import HENormalization, ToGrayscale
+from src.ml_utils.machine_learning import UNetLightning, insert_transform
+
+
+def test_model(
+    test_image_path: Path,
+    normalizer_image_path: Path,
+    model_path: Path,
+    batch_size: int,
+    num_workers: int,
+    img_folder: str = 'img',
+    lbl_folder: str = 'lbl',
+    color_mode: str = 'color',
+    classes: int = 1,
+    visualization_path: Path | None = None
+) -> None:
+    test_images_path = test_image_path / img_folder
+    test_labels_path = test_image_path / lbl_folder
+
+    # setup img/label dicts
+    test_images = sorted([x for x in test_images_path.iterdir() if x.suffix == '.png' and not x.name.startswith('.')])
+    test_labels = sorted([x for x in test_labels_path.iterdir() if x.suffix == '.png' and not x.name.startswith('.')])
+
+    test_files = [{'img': img, 'seg': seg} for img, seg in zip(test_images, test_labels)]
+
+    if color_mode == 'color':
+        normalizer = torchstain.normalizers.ReinhardNormalizer(method='modified', backend='torch')
+        normalizer.fit(read_image(normalizer_image_path))
+
+    # setup transformation composition and create dataset + data loader
+    test_transforms = Compose([
+        LoadImaged(keys=['img', 'seg'], dtype=np.float32),
+        EnsureChannelFirstd(keys=['img', 'seg']),
+        ToTensor(dtype=np.float32),
+    ])
+
+    if color_mode == 'color':
+        test_transforms = insert_transform(
+            test_transforms, 
+            HENormalization(keys=['img'], normalizer=normalizer, method='reinhard'),
+            2
+        )
+    else:
+        test_transforms = insert_transform(
+            test_transforms, 
+            ToGrayscale(keys=['img']),
+            2
+        )
+
+    if classes > 1:
+        test_transforms = insert_transform(
+            test_transforms, 
+            AsDiscreted(keys=["seg"], to_onehot=classes),
+            2
+        )
+
+    # setup data loaders
+    test_ds = Dataset(data=test_files, transform=test_transforms)
+    test_loader = DataLoader(
+        test_ds,
+        batch_size=batch_size,
+        num_workers=num_workers,
+        persistent_workers=True,
+        pin_memory=torch.cuda.is_available()
+    )
+
+    # assert the images are correctly transformed
+    try:
+        if color_mode == 'color':
+            assert(test_ds[0]['img'].shape == torch.Size([3, 1024, 1024]))
+        else:
+            assert(test_ds[0]['img'].shape == torch.Size([1, 1024, 1024]))
+            
+        if classes > 1:
+            assert(test_ds[0]['seg'].shape == torch.Size([classes, 1024, 1024]))
+        else:
+            print(test_ds[0]['seg'].shape)
+            assert(test_ds[0]['seg'].shape == torch.Size([1, 1024, 1024]))
+    except AssertionError as e:
+        print("Transformation of Images failed, make sure only images are forwarded to the pipeline")
+        print(e)
+        exit(1)
+
+    # Load the trained model from the checkpoint
+    if classes == 1:
+        pl_model = UNetLightning(
+            test_loader,
+            test_files, 
+            color_mode=color_mode,
+            metric=DiceMetric(include_background=False, reduction="mean", num_classes=2, ignore_empty=False),
+            metric_iou=MeanIoU(include_background=False, reduction="mean", ignore_empty=False),   
+            visualization_path=visualization_path
+        )
+    else:
+        print('Multi Class Mode')
+        pl_model = UNetLightning(
+            test_loader, test_files,
+            color_mode=color_mode,
+            classes=classes,
+            loss_fn=DiceCELoss(softmax=True),
+            metric=DiceMetric(include_background=False, reduction="mean", num_classes=classes, ignore_empty=False),
+            metric_iou=MeanIoU(include_background=False, reduction="mean", ignore_empty=False),   
+            visualization_path=visualization_path
+        )
+
+    # Initialize the trainer
+    trainer = Trainer(
+        devices=1,
+        accelerator="gpu" if torch.cuda.is_available() else "cpu"
+    )
+
+    # Evaluate the model on the test data
+    trainer.test(pl_model, test_loader, ckpt_path=model_path)

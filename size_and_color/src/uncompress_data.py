@@ -5,7 +5,6 @@
 #             zf.extract(member, target_path)
 #         except zipfile.error as e:
 #             pass
-# TODO impl logging
 # TODO fix cleanup of logic (does currently not delete all files)
 
 # Python Standard Library
@@ -13,12 +12,14 @@ from pathlib import Path
 from shutil import copy
 import zipfile
 from itertools import product
+from multiprocessing import Pool
 
 # Third Party Libraries
 import h5py
 import pandas as pd
 from openslide import OpenSlide, OpenSlideError
 from PIL import Image
+from matplotlib.image import imread
 import cv2
 import matplotlib.pyplot as plt
 import numpy as np
@@ -75,8 +76,10 @@ def unpack_cocahis(dir: Path, remove_raw: bool) -> None:
         patient_img_num = img_num[i]
 
         # save image to respective folder
-        plt.imsave(processed_dir / trtst_ / 'img' / f'patient-{patient}_image-{patient_img_num}.png', img)
-        plt.imsave(processed_dir / trtst_ / 'lbl' / f'patient-{patient}_image-{patient_img_num}.png', lbl)
+        img = Image.fromarray(img)
+        __add_bottom_margin(img, 351, (255,255,255)).resize((1024,1024)).save(processed_dir / trtst_ / 'img' / f'patient-{patient}_image-{patient_img_num}.png')
+        lbl = Image.fromarray(lbl)
+        __add_bottom_margin(lbl, 351, 0).resize((1024,1024)).save(processed_dir / trtst_ / 'lbl' / f'patient-{patient}_image-{patient_img_num}.png')
 
     if remove_raw:
         print('Removing raw CoCaHis data')
@@ -127,9 +130,15 @@ def unpack_rings(dir: Path, remove_raw: bool) -> None:
             folder = 'train'
 
             for img in tqdm([img for img in img_path.iterdir() if not img.name.startswith('.')], desc='Copying RINGS TRAIN data'):   
-                copy(img, processed_dir / folder / 'img' / img.name)
-                copy(lbl_tumor / img.name, processed_dir / folder / 'lbl_tumor' / img.name)
-                copy(lbl_gland / img.name, processed_dir / folder / 'lbl_gland' / img.name)
+                Image.open(
+                    img
+                ).resize((1024, 1024)).save(processed_dir / folder / 'img' / img.name)
+                Image.fromarray(imread(
+                    lbl_tumor / img.name
+                )).convert("L").resize((1024, 1024)).save(processed_dir / folder / 'lbl_tumor' / img.name)
+                Image.fromarray(imread(
+                    lbl_gland / img.name
+                )).convert("L").resize((1024, 1024)).save(processed_dir / folder / 'lbl_gland' / img.name)
         else:
             __resplit_rings_test_data(img_path, lbl_tumor, lbl_gland, processed_dir)  
 
@@ -159,55 +168,66 @@ def unpack_and_tile_panda(dir: Path, remove_raw: bool) -> None:
     processed_dir = dir / 'processed' / 'panda'
 
     # unzip panda data
-    with zipfile.ZipFile(raw_dir / 'prostate-cancer-grade-assessment.zip', 'r') as zip_ref:
-        print('Extracting PANDA dataset')
-        zip_ref.extractall(raw_dir)
+    # with zipfile.ZipFile(raw_dir / 'prostate-cancer-grade-assessment.zip', 'r') as zip_ref:
+    #     print('Extracting PANDA dataset')
+    #     zip_ref.extractall(raw_dir)
 
     # generate folder structure in processed folder
     __init_ml_folder_structure(processed_dir, 'panda')
 
-    images = pd.read_csv('/Volumes/teddoww/dimip_data/raw/panda/train.csv')
+    images = pd.read_csv(raw_dir / 'train.csv')
     images = images[images['data_provider'] == 'radboud']
     tiles_used = {'test': [], 'validate': [], 'train': []}
     tiles_used_counter = 0
+    tasks = []
 
-    # iterate over tain_label_masks (as we have less masks than images)
+    # generate tasks with according folder allocation
     for img_id in tqdm(images['image_id'],
-        desc='Extracting PANDA dataset'
+        desc='Generating tiling tasks for dataset processing'                   
     ):
-        try:
-            label = OpenSlide(raw_dir / 'train_label_masks' / (img_id + '_mask.tiff'))
-            slide = OpenSlide(raw_dir / 'train_images' / (img_id + '.tiff'))
-        except OpenSlideError:
-            continue
-
-        # use 10 first for test
         if tiles_used_counter < 10:
             folder = 'test'
-            tiles_used[folder].append(img_id)
-        # 20 for validation
         elif tiles_used_counter < 30:
             folder = 'validate'
-            tiles_used[folder].append(img_id)
-        # rest for training
         else:
             folder = 'train'
-            tiles_used[folder].append(img_id)
-        
+
+        tiles_used[folder].append(img_id)
+        save_path = processed_dir / folder
+        tasks.append((img_id, raw_dir, save_path))
         tiles_used_counter += 1
 
-        save_path = processed_dir / folder
-
-        __extract_tiles(slide, label, save_path, img_id)
+    # iterate over tain_label_masks (as we have less masks than images)
+    with Pool(processes=8) as pool:
+        list(tqdm(pool.imap_unordered(__tile_worker, tasks), total=len(tasks), desc="Tiling PANDA dataset"))
     
     # save the used tiles in a csv file
-    pd.DataFrame(tiles_used).to_csv(processed_dir / 'tiles_used.csv')
+    # TODO fix this
+    #pd.DataFrame(tiles_used).to_csv(processed_dir / 'tiles_used.csv')
 
     if remove_raw:
         print('Removing raw PANDA data')
         (raw_dir / 'panda.zip').unlink()
         (raw_dir / 'panda').rmdir()
 
+
+def __tile_worker(task):
+    img_id, raw_dir, save_path = task
+    try:
+        label = OpenSlide(raw_dir / 'train_label_masks' / (img_id + '_mask.tiff'))
+        slide = OpenSlide(raw_dir / 'train_images' / (img_id + '.tiff'))
+        __extract_tiles(slide, label, save_path, img_id)
+    except OpenSlideError:
+        return None
+    except Exception as e:
+        print(f"Unexpected error for {img_id}: {e}")
+    finally:
+        try:
+            slide.close()
+            label.close()
+        except:
+            pass
+    return img_id
 
 def __resplit_rings_test_data(
     img_path: Path,
@@ -218,7 +238,8 @@ def __resplit_rings_test_data(
     """
     Helper function to generate a 1200/200/100 split for the RINGS test data. as the 1000/500 split is not optimal for
     ML. The split tries to consider patients, due to suboptimal documentation this is however not guaranteed.<br>
-    The patient groupings were manually determined from the provided data.
+    The patient groupings were manually determined from the provided data.<br>
+    All images are rescaled from 1500x1500px to 1024x1024px resolution.
 
     Parameters
     ----------
@@ -243,9 +264,13 @@ def __resplit_rings_test_data(
         ]:
             folder = 'train'
 
-        copy(img, processed_dir / folder / 'img' / img.name)
-        copy(lbl_tumor / img.name, processed_dir / folder / 'lbl_tumor' / img.name)
-        copy(lbl_gland / img.name, processed_dir / folder / 'lbl_gland' / img.name)
+        Image.open(img).resize((1024, 1024)).save(processed_dir / folder / 'img' / img.name)
+        Image.fromarray(imread(
+            lbl_tumor / img.name
+        )).convert("L").resize((1024, 1024)).save(processed_dir / folder / 'lbl_tumor' / img.name)
+        Image.fromarray(imread(
+            lbl_gland / img.name
+        )).convert("L").resize((1024, 1024)).save(processed_dir / folder / 'lbl_gland' / img.name)
 
 
 def __init_ml_folder_structure(data_dir: Path, dataset: str | None = None) -> None:
@@ -291,13 +316,18 @@ def __extract_tiles(slide: OpenSlide, label: OpenSlide, save_path: Path, id: str
     tile_size = 1024
 
     # 5x
-    for y in tqdm(range(0, label.level_dimensions[1][1], tile_size), desc='Tile rows 5x', leave=False):
+    for y in range(0, label.level_dimensions[1][1], tile_size):
         for x in range(0, label.level_dimensions[1][0], tile_size):
-            lbl_tile = label.read_region((x*4, y*4), 1, (tile_size, tile_size))
-            lbl_tile_np = np.array(lbl_tile.split()[0]) # Only consider the R channel
-            if np.count_nonzero(lbl_tile_np) < 157286: # 15% of 1024x1024
+            try:
+                lbl_tile = label.read_region((x*4, y*4), 1, (tile_size, tile_size))
+                lbl_tile_np = np.array(lbl_tile.split()[0]) # Only consider the R channel
+                if np.count_nonzero(lbl_tile_np) < 157286: # 15% of 1024x1024
+                    continue
+                tile = slide.read_region((x*4, y*4), 1, (tile_size, tile_size))
+            except OpenSlideError:
+                print(f"Skipping tile ({x}, {y}) for {id} due to OpenSlide error")
                 continue
-            tile = slide.read_region((x*4, y*4), 1, (tile_size, tile_size))
+
             __save_tile(
                 tile,
                 lbl_tile_np,
@@ -307,15 +337,20 @@ def __extract_tiles(slide: OpenSlide, label: OpenSlide, save_path: Path, id: str
             )
 
     # 10x
-    for y in tqdm(range(0, label.level_dimensions[0][1], tile_size*2), desc='Tile rows 10x', leave=False):
+    for y in range(0, label.level_dimensions[0][1], tile_size*2):
         for x in range(0, label.level_dimensions[0][0], tile_size*2):
-            lbl_tile = label.read_region((x, y), 0, (tile_size*2, tile_size*2))
-            lbl_tile_np = np.array(lbl_tile.split()[0]) # Only consider the R channel
-            if np.count_nonzero(lbl_tile_np) < 629145: # 15% of 2048x2048
+            try:
+                lbl_tile = label.read_region((x, y), 0, (tile_size*2, tile_size*2))
+                lbl_tile_np = np.array(lbl_tile.split()[0]) # Only consider the R channel
+                if np.count_nonzero(lbl_tile_np) < 629145: # 15% of 2048x2048
+                    continue
+                tile = slide.read_region((x, y), 0, (tile_size*2, tile_size*2))
+                tile = tile.resize((tile_size, tile_size), resample=Image.NEAREST)
+                lbl_tile_np = cv2.resize(lbl_tile_np, (tile_size, tile_size), interpolation=cv2.INTER_NEAREST)
+            except OpenSlideError:
+                print(f"Skipping tile ({x}, {y}) for {id} due to OpenSlide error")
                 continue
-            tile = slide.read_region((x, y), 0, (tile_size*2, tile_size*2))
-            tile = tile.resize((tile_size, tile_size), resample=Image.NEAREST)
-            lbl_tile_np = cv2.resize(lbl_tile_np, (tile_size, tile_size), interpolation=cv2.INTER_NEAREST)
+    
             __save_tile(
                 tile,
                 lbl_tile_np,
@@ -325,13 +360,18 @@ def __extract_tiles(slide: OpenSlide, label: OpenSlide, save_path: Path, id: str
             )
 
     # 20x
-    for y in tqdm(range(0, label.level_dimensions[0][1], tile_size), desc='Tile rows 20x', leave=False):
+    for y in range(0, label.level_dimensions[0][1], tile_size):
         for x in range(0, label.level_dimensions[0][0], tile_size):
-            lbl_tile = label.read_region((x, y), 0, (tile_size, tile_size))
-            lbl_tile_np = np.array(lbl_tile.split()[0]) # Only consider the R channel
-            if np.count_nonzero(lbl_tile_np) < 157286: # 15% of 1024x1024
+            try:
+                lbl_tile = label.read_region((x, y), 0, (tile_size, tile_size))
+                lbl_tile_np = np.array(lbl_tile.split()[0]) # Only consider the R channel
+                if np.count_nonzero(lbl_tile_np) < 157286: # 15% of 1024x1024
+                    continue
+                tile = slide.read_region((x, y), 0, (tile_size, tile_size))
+            except OpenSlideError:
+                print(f"Skipping tile ({x}, {y}) for {id} due to OpenSlide error")
                 continue
-            tile = slide.read_region((x, y), 0, (tile_size, tile_size))
+
             __save_tile(
                 tile,
                 lbl_tile_np,
@@ -363,5 +403,19 @@ def __save_tile(
     ----------
     - `None`
     """
-    slide_tile.save(save_path / ('img_' + resolution) / (name + '.png'))
+    slide_tile.convert('RGB').save(save_path / ('img_' + resolution) / (name + '.png'))
     Image.fromarray(lbl_tile).save(save_path / ('lbl_' + resolution) / (name + '.png'))
+
+
+def __add_bottom_margin(
+    pil_img: Image,
+    bottom: int, 
+    color: tuple[int, int, int] | int
+) -> Image:
+    width, height = pil_img.size
+    new_width = width
+    new_height = height + bottom
+    result = Image.new(pil_img.mode, (new_width, new_height), color)
+    result.paste(pil_img, (0, 0))
+
+    return result

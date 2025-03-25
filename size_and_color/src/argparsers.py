@@ -34,6 +34,13 @@ def data_setup_cli_parser():
     )
 
     oa.add_argument(
+        '-mp', '--model_path',
+        required=False,
+        default='models',
+        help='Path to the directory where the trained models are.'
+    )
+
+    oa.add_argument(
         '-rr', '--remove_raw',
         action='store_true',
         help='Flag if the raw data should be removed after processing to save disc space.'
