@@ -101,24 +101,27 @@ def test_model(
 
     # Load the trained model from the checkpoint
     if classes == 1:
-        pl_model = UNetLightning(
-            test_loader,
-            test_files, 
+        pl_model = UNetLightning.load_from_checkpoint(
+            checkpoint_path=model_path,
+            val_loader = test_loader,
+            original_files = test_files, 
             color_mode=color_mode,
             metric=DiceMetric(include_background=False, reduction="mean", num_classes=2, ignore_empty=False),
             metric_iou=MeanIoU(include_background=False, reduction="mean", ignore_empty=False),   
-            visualization_path=visualization_path
+            visualization_path=visualization_path,
         )
     else:
         print('Multi Class Mode')
-        pl_model = UNetLightning(
-            test_loader, test_files,
+        pl_model = UNetLightning.load_from_checkpoint(
+            checkpoint_path=model_path,
+            val_loader = test_loader,
+            original_files=test_files,
             color_mode=color_mode,
             classes=classes,
             loss_fn=DiceCELoss(softmax=True),
             metric=DiceMetric(include_background=False, reduction="mean", num_classes=classes, ignore_empty=False),
             metric_iou=MeanIoU(include_background=False, reduction="mean", ignore_empty=False),   
-            visualization_path=visualization_path
+            visualization_path=visualization_path,
         )
 
     # Initialize the trainer
@@ -126,6 +129,6 @@ def test_model(
         devices=1,
         accelerator="gpu" if torch.cuda.is_available() else "cpu"
     )
+    
+    return trainer.test(pl_model, test_loader, ckpt_path=model_path)[0]
 
-    # Evaluate the model on the test data
-    trainer.test(pl_model, test_loader, ckpt_path=model_path)

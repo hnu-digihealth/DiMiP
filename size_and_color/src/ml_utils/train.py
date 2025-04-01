@@ -172,7 +172,6 @@ def train_and_validate_model(
         max_epochs=1000,
         devices=1, accelerator=mode,
         precision=32,
-        limit_train_batches=12,
         callbacks=[
             ModelCheckpoint(monitor='val_dice', mode='max', save_top_k=1, verbose=True, filename='best_dice'),
             ModelCheckpoint(monitor='val_loss', mode='min', save_top_k=1, verbose=True, filename='best_loss'),

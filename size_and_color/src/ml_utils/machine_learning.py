@@ -131,9 +131,9 @@ class UNetLightning(pl.LightningModule):
         Actions to perform at the end of the validation epoch.
         """
         dice_tensor = self.metric_f1.aggregate()
-        dice = dice_tensor.mean().item() if dice_tensor.numel() > 1 else dice_tensor.item()
+        dice = dice_tensor.mean().item() if self.classes > 1 else dice_tensor.item()
         iou_tensor = self.metric_iou.aggregate()
-        iou = iou_tensor.mean().item() if iou_tensor.numel() > 1 else iou_tensor.item()
+        iou = iou_tensor.mean().item() if self.classes > 1 else iou_tensor.item()
 
         self.log("val_dice", dice, on_step=False, on_epoch=True, prog_bar=True, logger=True)
         self.log("val_iou", iou, on_step=False, on_epoch=True, prog_bar=True, logger=True)
@@ -171,32 +171,62 @@ class UNetLightning(pl.LightningModule):
             preds = torch.sigmoid(outputs) > 0.5
         else:
             preds = torch.softmax(outputs, dim=1)
-            preds = torch.argmax(preds, dim=1, keepdim=True)
-            labels = torch.argmax(labels, dim=1, keepdim=True)
+            
+            if labels.shape[1] > 1:
+                pass
+            else:
+                labels = torch.nn.functional.one_hot(labels.squeeze(1), num_classes=self.classes).permute(0, 3, 1, 2).float()
+
 
         self.metric_f1(preds, labels)
         self.metric_iou(preds, labels)
 
         # Compute per-image IoU manually for caching
-        if self.visualization_path:
-            iou_per_image = []
-            for p, l in zip(preds, labels):
-                intersection = torch.logical_and(p == 1, l == 1).sum().item()
-                union = torch.logical_or(p == 1, l == 1).sum().item()
-                iou = intersection / union if union > 0 else 0.0
-                iou_per_image.append(iou)
+        for i in range(preds.shape[0]):
+            pred_i = preds[i]
+            label_i = labels[i]
 
-            for i in range(len(iou_per_image)):
-                self.test_outputs_cache.append({
-                    "iou": iou_per_image[i],
-                    "img": inputs[i].detach().cpu(),
-                    "pred": preds[i].detach().cpu(),
-                    "gt": labels[i].detach().cpu()
-                })
+            if self.classes == 1:
+                # Binary Dice
+                intersection = torch.logical_and(pred_i == 1, label_i == 1).sum().item()
+                union = (pred_i == 1).sum().item() + (label_i == 1).sum().item()
+                dice = 2 * intersection / union if union > 0 else 0.0
+
+                iou = intersection / torch.logical_or(pred_i == 1, label_i == 1).sum().item()
+                iou = iou if not np.isnan(iou) else 0.0
+            else:
+                # Multiclass Dice: mean over all classes (excluding background)
+                dice_list = []
+                iou_list = []
+                for c in range(1, self.classes):  # skip background
+                    pred_c = (pred_i == c)
+                    label_c = (label_i == c)
+
+                    inter = torch.logical_and(pred_c, label_c).sum().item()
+                    pred_sum = pred_c.sum().item()
+                    label_sum = label_c.sum().item()
+
+                    dice_c = (2 * inter) / (pred_sum + label_sum) if (pred_sum + label_sum) > 0 else 0.0
+                    union_c = torch.logical_or(pred_c, label_c).sum().item()
+                    iou_c = inter / union_c if union_c > 0 else 0.0
+
+                    dice_list.append(dice_c)
+                    iou_list.append(iou_c)
+
+                dice = float(np.mean(dice_list))
+                iou = float(np.mean(iou_list))
+
+            self.test_outputs_cache.append({
+                "iou": iou,
+                "dice": dice,
+                "img": inputs[i].detach().cpu(),
+                "pred": pred_i.detach().cpu(),
+                "gt": label_i.detach().cpu()
+            })
     
     def on_test_epoch_end(self):
         dice_tensor = self.metric_f1.aggregate()
-        if dice_tensor.numel() > 1:
+        if self.classes > 1:
             dice = dice_tensor.mean().item()
             for i, class_dice in enumerate(dice_tensor):
                 self.log(f"test_dice_class_{i}", class_dice.item(), on_epoch=True, prog_bar=False, logger=True)
@@ -204,8 +234,8 @@ class UNetLightning(pl.LightningModule):
             dice = dice_tensor.item()
 
         iou_tensor = self.metric_iou.aggregate()
-        iou = iou_tensor.mean().item() if iou_tensor.numel() > 1 else iou_tensor.item()
-        if iou_tensor.numel() > 1:
+        iou = iou_tensor.mean().item() if self.classes > 1 else iou_tensor.item()
+        if self.classes > 1:
             for i, class_iou in enumerate(iou_tensor):
                 self.log(f"test_iou_class_{i}", class_iou.item(), on_epoch=True, prog_bar=False, logger=True)
         
@@ -217,22 +247,27 @@ class UNetLightning(pl.LightningModule):
         self.metric_iou.reset()
 
         if self.visualization_path:
-            self.visualize_best_test_sample()
+            sorted_samples = sorted(self.test_outputs_cache, key=lambda x: x["dice"], reverse=True)
 
-    def visualize_best_test_sample(self) -> None:
+            top_samples = sorted_samples[:3]
+            bottom_samples = sorted_samples[-3:]
+
+            for idx, sample in enumerate(top_samples):
+                self.visualize_test_sample(sample, f"best_{idx+1}.png")
+
+            for idx, sample in enumerate(bottom_samples):
+                self.visualize_test_sample(sample, f"worst_{idx+1}.png")
+
+    def visualize_test_sample(self, sample, filename) -> None:
         """
         Visualizes and saves the test sample with the highest IoU score.
         
         Args:
             save_path (str): Path to save the output image.
         """
-
-        # Find best sample by IoU
-        best_sample = max(self.test_outputs_cache, key=lambda x: x["iou"])
-
-        img = normalize_img_for_plot(best_sample["img"])
-        gt = best_sample["gt"].squeeze().cpu().numpy()
-        pred = best_sample["pred"].squeeze().cpu().numpy()
+        img = normalize_img_for_plot(sample["img"])
+        gt = sample["gt"].squeeze().cpu().numpy()
+        pred = sample["pred"].squeeze().cpu().numpy()
 
         # Plot input, GT, and prediction
         fig, axs = plt.subplots(1, 3, figsize=(12, 4))
@@ -245,10 +280,10 @@ class UNetLightning(pl.LightningModule):
         axs[1].axis("off")
 
         axs[2].imshow(pred, cmap="gray")
-        axs[2].set_title(f"Prediction (IoU: {best_sample['iou']:.2f})")
+        axs[2].set_title(f"Prediction (Dice: {sample['dice']:.2f})")
         axs[2].axis("off")
 
-        fig.savefig(self.visualization_path / f"best_sample_{self.current_epoch}.png")
+        fig.savefig(self.visualization_path / filename)
         plt.close(fig)
 
 

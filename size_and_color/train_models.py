@@ -28,7 +28,6 @@ def train_color_and_gray_models(data_path: Path):
     print('###################################')
     print('# -> Training CoCaHis Gray ########')
     print('###################################')
-
     train_and_validate_model(
         train_image_path= cocahis_path / 'train',
         val_image_path= cocahis_path / 'validate',

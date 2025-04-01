@@ -27,7 +27,7 @@ def data_setup_cli_parser():
     oa = parser.add_argument_group('Optional Arguments')       
     oa.add_argument(
         '-dp', '--data_path',
-        type=str,
+        type=Path,
         required=False,
         default='data',
         help='Path to the top level data directory. This directory will contain all the raw and preprocessed data.'
@@ -35,6 +35,7 @@ def data_setup_cli_parser():
 
     oa.add_argument(
         '-mp', '--model_path',
+        type=Path,
         required=False,
         default='models',
         help='Path to the directory where the trained models are.'
@@ -44,6 +45,20 @@ def data_setup_cli_parser():
         '-rr', '--remove_raw',
         action='store_true',
         help='Flag if the raw data should be removed after processing to save disc space.'
+    )
+
+    oa.add_argument(
+        '-sv', '--save_visualization',
+        action='store_true',
+        help='Flag if the visualization of the data should be saved.'
+    )
+
+    oa.add_argument(
+    '-rp', '--results_path',
+        type=Path,
+        required=False,
+        default='results',
+        help='Path to the directory where the results are saved.'
     )
 
     # Return parsers
