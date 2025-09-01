@@ -83,7 +83,7 @@ def unpack_cocahis(dir: Path, remove_raw: bool) -> None:
 
     if remove_raw:
         print('Removing raw CoCaHis data')
-        (raw_dir / 'CoCaHis.hdf5').unlink()
+        (raw_dir / 'CoCaHis.hdf5').unlink()         
 
 
 def unpack_rings(dir: Path, remove_raw: bool) -> None:
@@ -168,9 +168,9 @@ def unpack_and_tile_panda(dir: Path, remove_raw: bool) -> None:
     processed_dir = dir / 'processed' / 'panda'
 
     # unzip panda data
-    # with zipfile.ZipFile(raw_dir / 'prostate-cancer-grade-assessment.zip', 'r') as zip_ref:
-    #     print('Extracting PANDA dataset')
-    #     zip_ref.extractall(raw_dir)
+    with zipfile.ZipFile(raw_dir / 'prostate-cancer-grade-assessment.zip', 'r') as zip_ref:
+        print('Extracting PANDA dataset')
+        zip_ref.extractall(raw_dir)
 
     # generate folder structure in processed folder
     __init_ml_folder_structure(processed_dir, 'panda')

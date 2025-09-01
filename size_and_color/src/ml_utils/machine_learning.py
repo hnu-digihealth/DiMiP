@@ -171,12 +171,8 @@ class UNetLightning(pl.LightningModule):
             preds = torch.sigmoid(outputs) > 0.5
         else:
             preds = torch.softmax(outputs, dim=1)
-            
-            if labels.shape[1] > 1:
-                pass
-            else:
-                labels = torch.nn.functional.one_hot(labels.squeeze(1), num_classes=self.classes).permute(0, 3, 1, 2).float()
-
+            preds = torch.argmax(preds, dim=1, keepdim=True)
+            labels = torch.argmax(labels, dim=1, keepdim=True)
 
         self.metric_f1(preds, labels)
         self.metric_iou(preds, labels)
@@ -191,13 +187,9 @@ class UNetLightning(pl.LightningModule):
                 intersection = torch.logical_and(pred_i == 1, label_i == 1).sum().item()
                 union = (pred_i == 1).sum().item() + (label_i == 1).sum().item()
                 dice = 2 * intersection / union if union > 0 else 0.0
-
-                iou = intersection / torch.logical_or(pred_i == 1, label_i == 1).sum().item()
-                iou = iou if not np.isnan(iou) else 0.0
             else:
                 # Multiclass Dice: mean over all classes (excluding background)
                 dice_list = []
-                iou_list = []
                 for c in range(1, self.classes):  # skip background
                     pred_c = (pred_i == c)
                     label_c = (label_i == c)
@@ -208,16 +200,12 @@ class UNetLightning(pl.LightningModule):
 
                     dice_c = (2 * inter) / (pred_sum + label_sum) if (pred_sum + label_sum) > 0 else 0.0
                     union_c = torch.logical_or(pred_c, label_c).sum().item()
-                    iou_c = inter / union_c if union_c > 0 else 0.0
 
                     dice_list.append(dice_c)
-                    iou_list.append(iou_c)
 
                 dice = float(np.mean(dice_list))
-                iou = float(np.mean(iou_list))
 
             self.test_outputs_cache.append({
-                "iou": iou,
                 "dice": dice,
                 "img": inputs[i].detach().cpu(),
                 "pred": pred_i.detach().cpu(),

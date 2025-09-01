@@ -46,11 +46,11 @@ def test_models(
     if results_dir is None:
         results_dir = Path('.') / 'results'
 
-    print(models)
-
     for model in models:
         results = []
-        print(f'Testing model: {model["id"]}_{model["type"]}')
+        print('#################################################')
+        print(f' -> Testing model: {model["id"]}_{model["type"]}')
+        print('#################################################')
         # run test on model and save all dice results as well as images
         color_mode = 'color' if model['type'] != 'grayscale' else 'grayscale'
         normalizer_image_path = Path()

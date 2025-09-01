@@ -4,3 +4,5 @@ processed/
 __pycache__/
 size_and_color/data/results/*
 .DS_Store
+lightning_logs/
+results/

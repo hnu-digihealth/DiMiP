@@ -101,6 +101,8 @@ def test_model(
 
     # Load the trained model from the checkpoint
     if classes == 1:
+        print('#################')
+        print('Single Class Mode')
         pl_model = UNetLightning.load_from_checkpoint(
             checkpoint_path=model_path,
             val_loader = test_loader,
@@ -111,6 +113,7 @@ def test_model(
             visualization_path=visualization_path,
         )
     else:
+        print('################')
         print('Multi Class Mode')
         pl_model = UNetLightning.load_from_checkpoint(
             checkpoint_path=model_path,

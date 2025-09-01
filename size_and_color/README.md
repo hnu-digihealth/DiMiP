@@ -39,10 +39,3 @@ It should look like this:
         - using `-h` \ `--help` will provide you with further information
     42. Evaluate your/the pre-trained models on the test data using the evaluate model script `python evaluate_model.py`
         - using `-h` \ `--help` will provide you with further information
-
-5. Answer the research question (overall evaluation and comparison of models)
-    - EITER: run the *Size and Color, Does it Matter in Pathology* script `python sac_dimip.py`
-        - using `-h` \ `--help` will provide you with further information
-        - the script will provide some evaluations and generate `csv` and `png` files highlighting evaluation results
-    - ALTERNATIVELY: run the *Size and Color, Does it Matter in Pathology* notebook `python -m notebook sac_dimip.ipynb`
-        - this provides a more interactive and GUI-driven approach to the overall evaluation
